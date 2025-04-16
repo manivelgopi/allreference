@@ -1,0 +1,98 @@
+trigger:
+  branches:
+    include:
+      - feature/*
+  paths:
+    include:
+      - infrastructure/*
+pool:
+  vmImage: 'ubuntu-latest'
+variables:
+ - group: variables-azufdevops-prod-01
+
+stages:
+- stage: TerraformPlan
+  jobs:
+    - job: TerraformInitialization
+      steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+      
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM INIT
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/infrastructure'
+            backendServiceArm: '$(azureServiceConnection)'  # Using variable
+            backendAzureRmResourceGroupName: '$(backendAzureRmResourceGroupName)'
+            backendAzureRmStorageAccountName: '$(backendAzureRmStorageAccountName)'
+            backendAzureRmContainerName: '$(backendAzureRmContainerNameInfra)'
+            backendAzureRmKey: '$(backendAzureRmKeyInfra)'
+        
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM PLAN
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/infrastructure'
+            commandOptions: "-out=tfplan"
+            environmentServiceNameAzureRM: '$(azureServiceConnection)'
+
+- stage: TerraformValidation
+  jobs:
+    - job: waitForValidation
+      displayName: Wait for external validation
+      pool: server
+      timeoutInMinutes: 120
+      steps:
+        - task: ManualValidation@0
+          timeoutInMinutes: 120
+          inputs:
+            instructions: 'Please validate the build configuration and resume'
+            onTimeout: 'reject'
+
+- stage: TerraformApply
+  dependsOn: TerraformValidation
+  condition: succeeded('TerraformValidation')
+  jobs:
+  - job: TerraformInitialization
+    steps:
+      - task: TerraformInstaller@1
+        inputs:
+          terraformVersion: 'latest'
+    
+      - task: TerraformTaskV4@4
+        displayName: TERRAFORM INIT
+        inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/infrastructure'
+          backendServiceArm: '$(azureServiceConnection)'  # Using variable
+          backendAzureRmResourceGroupName: '$(backendAzureRmResourceGroupName)'
+          backendAzureRmStorageAccountName: '$(backendAzureRmStorageAccountName)'
+          backendAzureRmContainerName: '$(backendAzureRmContainerNameInfra)'
+          backendAzureRmKey: '$(backendAzureRmKeyInfra)'
+
+      - task: TerraformTaskV4@4
+        displayName: TERRAFORM PLAN
+        inputs:
+          provider: 'azurerm'
+          command: 'plan'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/infrastructure'
+          commandOptions: "-out=tfplan"
+          environmentServiceNameAzureRM: '$(azureServiceConnection)'
+          args: '-out=$(System.DefaultWorkingDirectory)/infrastructure/tfplan'
+      - publish: $(System.DefaultWorkingDirectory)/infrastructure/tfplan
+        artifact: tfplan-artifact
+   
+      - task: TerraformTaskV4@4
+        displayName: TERRAFORM APPLY
+        inputs:
+          provider: 'azurerm'
+          workingDirectory: "$(System.DefaultWorkingDirectory)/infrastructure"
+          commandOptions: "tfplan"
+          command: 'apply'
+          environmentServiceNameAzureRM: '$(azureServiceConnection)'
+            

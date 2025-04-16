@@ -1,0 +1,98 @@
+
+
+trigger:
+  branches:
+    include:
+      - dev/*
+    exclude:
+      - main
+  paths:
+    include:
+      - dev_env_sanbox/*
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  azureServiceConnection: 'terraform-service-connection'
+stages:
+- stage:
+  jobs:
+    - job: TerraformInitialization
+      steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+      
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM INIT
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/dev_env_sanbox'
+            backendServiceArm: '$(azureServiceConnection)'  # Using variable
+            backendAzureRmResourceGroupName: 'rg-azuf-dev'
+            backendAzureRmStorageAccountName: 'saazufdevpipeline'
+            backendAzureRmContainerName: 'devops-plan-infrastructure'
+            backendAzureRmKey: 'tf/terraformdev.tfstate'
+            
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM PLAN
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/dev_env_sanbox'
+            commandOptions: "-var-file=terraform-dev.tfvars -out=tfplan"
+            environmentServiceNameAzureRM: 'terraform-service-connection'
+
+- stage: TerraformValidation
+  jobs:
+    - job: waitForValidation
+      displayName: Wait for external validation
+      pool: server
+      timeoutInMinutes: 120
+      steps:
+        - task: ManualValidation@0
+          timeoutInMinutes: 120
+          inputs:
+            instructions: 'Please validate the build configuration and resume'
+            onTimeout: 'reject'
+
+- stage: TerraformApply
+  dependsOn: TerraformValidation
+  condition: succeeded('TerraformValidation')
+  jobs:
+    - job: TerraformInitialization
+      steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+      
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM INIT
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/dev_env_sanbox'
+            backendServiceArm: '$(azureServiceConnection)'  # Using variable
+            backendAzureRmResourceGroupName: 'rg-azuf-dev'
+            backendAzureRmStorageAccountName: 'saazufdevpipeline'
+            backendAzureRmContainerName: 'devops-plan-infrastructure'
+            backendAzureRmKey: 'tf/terraformdev.tfstate'
+            
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM PLAN
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/dev_env_sanbox'
+            commandOptions: "-var-file=terraform-dev.tfvars -out=tfplan"
+            environmentServiceNameAzureRM: 'terraform-service-connection'
+
+        - task: TerraformTaskV4@4
+          displayName: TERRAFORM APPLY
+          inputs:
+            provider: 'azurerm'
+            workingDirectory: "$(System.DefaultWorkingDirectory)/dev_env_sanbox"
+            commandOptions: "-var-file=terraform-dev.tfvars"
+            command: 'apply'
+            environmentServiceNameAzureRM: 'terraform-service-connection'
